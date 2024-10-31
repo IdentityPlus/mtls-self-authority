@@ -1,4 +1,4 @@
-# Identity Plus - Command Line Interface
+# Identity Plus - mTLS Self Authority Command Line Interface
 
 The Indentity Plus CLI is a simple, command line tool for all identity plus basic functions. While these functions are available as API and can be perfomed from within applications, the CLI can come in handy to automate deployments and maintenance using an automation suite.
 
