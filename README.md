@@ -27,23 +27,23 @@ The Identity Plus command line interface is built in GoLang. We recomment that y
 **3.** Open a terminal window and change direcory into the Identity Plus CLI directory you just checked out  
 **4.** Build the application:  
 
-        $ go mod init identityplus  
+        $ go mod init selfauthority  
         $ go build
   
-**5.** You are done, the "identityplus" file in the current folder is your executable  
-**6.** You can also run the identityplus CLI without building it  
+**5.** You are done, the "selfauthority" file in the current folder is your executable  
+**6.** You can also run the selfauthority CLI without building it  
 
-        $ go run identityplus.go agents.go ...  
+        $ go run selfauthority.go ...  
 
 
 ## User Manual
 
-./identityplus [flags] command arguments
+./selfauthority [flags] command arguments
 
 ### Flags
 **-h** prints the help message  
 **-v** enables verbose mode  
-**-f identity/directory [HOMEDIR/.identityplus]**: specify the directory where the identity material will be stored  
+**-f identity/directory [HOMEDIR/.selfauthority]**: specify the directory where the identity material will be stored  
 **-d device-name [\"Default Go Test\"]**: specify the device name to be used for this device
 
 #### Debug Flags
