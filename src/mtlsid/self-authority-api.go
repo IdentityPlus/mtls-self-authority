@@ -5,70 +5,76 @@ package mtlsid
 // $ openssl pkcs12 -in client-id.p12 -clcerts -nodes -nocerts | openssl rsa > client-id.key
 
 import (
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"log"
-	"os"
-	"strconv"
-	"strings"
-	"net/http"
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
 type Self_Authority_API struct {
-	TrustStore string
-	Verbose bool
-	Service string
-	Identity_Dir string
-	Device_Name string
-	
-	__client *http.Client
+	TrustStore   []string `yaml:"trust_store"`
+	Verbose      bool     `yaml:"verbose"`
+	Service      string   `yaml:"identity_broker"`
+	Identity_Dir string   `yaml:"id_directory"`
+	Device_Name  string   `yaml:"device_name"`
+
+	client_certificate *tls.Certificate
 }
 
-func (cli *Self_Authority_API) Invalidate(){
-	cli.__client = nil
+func (cli *Self_Authority_API) Invalidate() {
+	cli.client_certificate = nil
 }
 
-//
-// just a set of wrappers around the methods
-//
-func (cli *Self_Authority_API) do_get(endpoint string, request_body string, certificate string, key string) (string, []byte) {
-	return cli.do_call(endpoint, "GET", request_body, certificate, key)
-}
-
-func (cli *Self_Authority_API) do_put(endpoint string, request_body string, certificate string, key string) (string, []byte) {
-	return cli.do_call(endpoint, "PUT", request_body, certificate, key)
-}
-
-func (cli *Self_Authority_API) do_post(endpoint string, request_body string, certificate string, key string) (string, []byte) {
-	return cli.do_call(endpoint, "POST", request_body, certificate, key)
-}
-
-func (cli *Self_Authority_API) do_delete(endpoint string, request_body string, certificate string, key string) (string, []byte) {
-	return cli.do_call(endpoint, "DELETE", request_body, certificate, key)
-}
-
-//
-// returns 2 values int this order: the http response status (int) and the body of the answer ([]byte)
-// - if the http response code is anything but 200, the body should be expected to contain
-//   some error description
-// - an error of 600 as response code means the call could not be made due to whatever reason
-// - 5xx errors mean the request was made, but generated a server error
-//
-func (cli *Self_Authority_API) do_call(endpoint string, method string, request_body string, certificate string, key string) (string, []byte) {
-
-	client, err := cli.client(certificate, key)
+func (cli *Self_Authority_API) insecure_call(endpoint string, method string, request_body string) (string, []byte) {
+	client, err := cli.client(nil)
 
 	if err != nil {
 		return "Unable to create http client: " + err.Error(), nil
 	}
 
+	return cli.do_call(client, endpoint, method, request_body)
+}
+
+func (cli *Self_Authority_API) Client_Certificate() (*tls.Certificate, error) {
+	if cli.client_certificate == nil {
+		client_certificate, err := tls.LoadX509KeyPair(cli.Identity_Dir+"/"+cli.Device_Name+".cer", cli.Identity_Dir+"/"+cli.Device_Name+".key")
+		if err != nil {
+			return nil, fmt.Errorf("error loading key material: %v", err.Error())
+		}
+
+		cli.client_certificate = &client_certificate
+	}
+
+	return cli.client_certificate, nil
+}
+
+func (cli *Self_Authority_API) secure_call(endpoint string, method string, request_body string) (string, []byte) {
+
+	client_certificate, err := cli.Client_Certificate()
+	if err != nil {
+		return "error loading key material: " + err.Error(), nil
+	}
+
+	client, err := cli.client(client_certificate)
+
+	if err != nil {
+		return "Unable to create http client: " + err.Error(), nil
+	}
+
+	return cli.do_call(client, endpoint, method, request_body)
+}
+
+func (cli *Self_Authority_API) do_call(client *http.Client, endpoint string, method string, request_body string) (string, []byte) {
 	if cli.Verbose {
 		fmt.Println(request_body)
 	}
@@ -100,63 +106,59 @@ func (cli *Self_Authority_API) do_call(endpoint string, method string, request_b
 	return "", bodyBytes
 }
 
-func (cli *Self_Authority_API) client(certificate string, key string) (*http.Client, error) {
+func (cli *Self_Authority_API) client(client_certificate *tls.Certificate) (*http.Client, error) {
 
-	// create the client if not yet created
-	if cli.__client == nil {
+	trusted_authorities, err := x509.SystemCertPool()
 
-		var client_certificates []tls.Certificate
-		var trusted_authorities *x509.CertPool
-
-		if cli.TrustStore != "" {
-			root_cert, err := ioutil.ReadFile(cli.TrustStore)
-
-			if err != nil {
-				return nil, errors.New("error loading trust material: " + err.Error())
-			}
-
-			trusted_authorities = x509.NewCertPool()
-			_ = trusted_authorities.AppendCertsFromPEM(root_cert)
-		}
-
-		if key != "" && certificate != "" {
-
-			clientCert, err := tls.LoadX509KeyPair(certificate, key)
-
-			if err != nil {
-				return nil, errors.New("error loading key material: " + err.Error())
-			}
-
-			client_certificates = []tls.Certificate{clientCert}
-		}
-
-		tlsConfig := tls.Config{
-			Certificates: client_certificates,
-			RootCAs:      trusted_authorities,
-		}
-
-		transport := http.Transport{
-			TLSClientConfig: &tlsConfig,
-		}
-
-		cli.__client = &http.Client{
-			Transport: &transport,
-			Timeout:   time.Second * 40,
-		}
+	if err != nil && cli.Verbose {
+		fmt.Println("Unable to load system trust store: %v", err)
 	}
 
-	return cli.__client, nil
+	if trusted_authorities == nil {
+		trusted_authorities = x509.NewCertPool()
+	}
+
+	for _, ca := range cli.TrustStore {
+		root_cert, err := ioutil.ReadFile(ca)
+
+		if err != nil {
+			return nil, errors.New("error loading trust material: " + err.Error())
+		}
+
+		_ = trusted_authorities.AppendCertsFromPEM(root_cert)
+	}
+
+	var client_certificates []tls.Certificate
+	if client_certificate != nil {
+		client_certificates = []tls.Certificate{*client_certificate}
+	}
+
+	tlsConfig := tls.Config{
+		Certificates: client_certificates,
+		RootCAs:      trusted_authorities,
+	}
+
+	transport := http.Transport{
+		TLSClientConfig: &tlsConfig,
+	}
+
+	__client := &http.Client{
+		Transport: &transport,
+		Timeout:   time.Second * 40,
+	}
+
+	return __client, nil
 }
 
 func (cli *Self_Authority_API) Interactive_enroll_user_agent() string {
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"request_oob_unlock\", \"args\": {\"no-redundancy\":false}}", "", "")
+	err, ans := cli.insecure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"request_oob_unlock\", \"args\": {\"no-redundancy\":false}}")
 
 	if err != "" {
 		return "Failed requesting login intent: " + err
 	}
 
 	if cli.Verbose {
-		fmt.Printf(string(ans))
+		// fmt.Printf(string(ans))
 	}
 
 	var response Intent_Response
@@ -189,7 +191,7 @@ func (cli *Self_Authority_API) Interactive_enroll_user_agent() string {
 	fmt.Print("Waiting ...")
 
 	for i := 0; i < 10; i++ {
-		err, ans = cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"oob_unlock\", \"args\": {\"token\": \""+response.Result.Token+"\", \"intent\": \""+response.Result.Intent+"\", \"keep-alive\":10}}}", "", "")
+		err, ans = cli.insecure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"oob_unlock\", \"args\": {\"token\": \""+response.Result.Token+"\", \"intent\": \""+response.Result.Intent+"\", \"keep-alive\":10}}}")
 
 		if err != "" {
 			return string(err)
@@ -214,7 +216,7 @@ func (cli *Self_Authority_API) Interactive_enroll_user_agent() string {
 }
 
 func (cli *Self_Authority_API) do_enroll(token string) string {
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"issue_certificate\", \"args\": {\"token\": \""+token+"\", \"device\": \""+cli.Device_Name+"\", \"protect\":true}}", "", "")
+	err, ans := cli.insecure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"issue_certificate\", \"args\": {\"token\": \""+token+"\", \"device\": \""+cli.Device_Name+"\", \"protect\":true}}")
 
 	if err != "" {
 		return "Failed issuing certificate: " + err
@@ -230,6 +232,10 @@ func (cli *Self_Authority_API) do_enroll(token string) string {
 	p12_cert, derr := base64.StdEncoding.DecodeString(agent_identity.Result.P12)
 	if derr != nil {
 		return "Failed decoding certificate: " + err
+	}
+
+	if cli.Verbose {
+		fmt.Printf("writing certificate information into: " + cli.Identity_Dir + "/")
 	}
 
 	ioutil.WriteFile(cli.Identity_Dir+"/"+cli.Device_Name+".p12", p12_cert, 0644)
@@ -253,14 +259,14 @@ func (cli *Self_Authority_API) do_enroll(token string) string {
 }
 
 func (cli *Self_Authority_API) Enroll_user_agent(authorization string) string {
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"qrc_unlock\", \"args\": {\"code\": \""+authorization+"\"}}", "", "")
+	err, ans := cli.insecure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"qrc_unlock\", \"args\": {\"code\": \""+authorization+"\"}}")
 
 	if err != "" {
 		return "Login failed: " + err
 	}
 
 	if cli.Verbose {
-		fmt.Printf(string(ans))
+		// fmt.Printf(string(ans))
 	}
 
 	var response Auth_Response
@@ -279,7 +285,7 @@ func (cli *Self_Authority_API) Enroll_user_agent(authorization string) string {
 
 func (cli *Self_Authority_API) Employ_service_agent(authorization string) string {
 
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"issue_service_agent_identity\", \"args\": {\"authorization\": \""+authorization+"\", \"agent-name\": \""+cli.Device_Name+"\", \"protect\":true}}", "", "")
+	err, ans := cli.insecure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"issue_service_agent_identity\", \"args\": {\"authorization\": \""+authorization+"\", \"agent-name\": \""+cli.Device_Name+"\", \"protect\":true}}")
 
 	if err != "" {
 		return "Failed issuing certificate: " + err
@@ -289,7 +295,7 @@ func (cli *Self_Authority_API) Employ_service_agent(authorization string) string
 	json.Unmarshal(ans, &agent_identity)
 
 	if cli.Verbose {
-		fmt.Printf(string(ans))
+		// fmt.Printf(string(ans))
 	}
 
 	if agent_identity.Error != "" {
@@ -327,7 +333,7 @@ func (cli *Self_Authority_API) Employ_service_agent(authorization string) string
 }
 
 func (cli *Self_Authority_API) Assist_enroll(managed_service string) string {
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"assist\", \"args\": {\"managed-service\": \""+managed_service+"\"}}", cli.Identity_Dir+"/"+cli.Device_Name+".cer", cli.Identity_Dir+"/"+cli.Device_Name+".key")
+	err, ans := cli.secure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"assist\", \"args\": {\"managed-service\": \""+managed_service+"\"}}")
 
 	if err != "" {
 		return "Failed generating autoprovisioning token: " + err
@@ -345,7 +351,7 @@ func (cli *Self_Authority_API) Assist_enroll(managed_service string) string {
 
 func (cli *Self_Authority_API) Enroll_unified(authorization string) string {
 
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"enroll\", \"args\": {\"authorization\": \""+authorization+"\", \"agent-name\": \""+cli.Device_Name+"\", \"protect\":true}}", "", "")
+	err, ans := cli.insecure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"enroll\", \"args\": {\"authorization\": \""+authorization+"\", \"agent-name\": \""+cli.Device_Name+"\", \"protect\":true}}")
 
 	if err != "" {
 		return "Failed issuing certificate: " + err
@@ -355,7 +361,7 @@ func (cli *Self_Authority_API) Enroll_unified(authorization string) string {
 	json.Unmarshal(ans, &agent_identity)
 
 	if cli.Verbose {
-		fmt.Printf(string(ans))
+		// fmt.Printf(string(ans))
 	}
 
 	if agent_identity.Error != "" {
@@ -370,6 +376,10 @@ func (cli *Self_Authority_API) Enroll_unified(authorization string) string {
 	path := cli.Identity_Dir
 	if os.MkdirAll(path, os.ModePerm) != nil {
 		log.Println(err)
+	}
+
+	if cli.Verbose {
+		fmt.Printf("writing certificate information into: " + cli.Identity_Dir + "/...")
 	}
 
 	ioutil.WriteFile(cli.Identity_Dir+"/"+cli.Device_Name+".p12", p12_cert, 0644)
@@ -394,7 +404,7 @@ func (cli *Self_Authority_API) Enroll_unified(authorization string) string {
 
 func (cli *Self_Authority_API) Renew(tentative bool) string {
 
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"renew_certificate\", \"args\": {\"device\": \""+cli.Device_Name+"\", \"protect\":true, \"tentative\":"+strconv.FormatBool(tentative)+"}}", cli.Identity_Dir+"/"+cli.Device_Name+".cer", cli.Identity_Dir+"/"+cli.Device_Name+".key")
+	err, ans := cli.secure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"renew_certificate\", \"args\": {\"device\": \""+cli.Device_Name+"\", \"protect\":true, \"tentative\":"+strconv.FormatBool(tentative)+"}}")
 
 	if err != "" {
 		return "Failed issuing certificate: " + err
@@ -430,13 +440,15 @@ func (cli *Self_Authority_API) Renew(tentative bool) string {
 		}
 
 		ioutil.WriteFile(cli.Identity_Dir+"/"+cli.Device_Name+".key", pem_key, 0644)
+
+		cli.Invalidate()
 	}
 
 	return agent_identity.Result.Outcome
 }
 
 func (cli *Self_Authority_API) Issue_service_identity(force bool) string {
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"issue_service_certificate\", \"args\": {\"force-renew\":"+strconv.FormatBool(force)+"}}", cli.Identity_Dir+"/"+cli.Device_Name+".cer", cli.Identity_Dir+"/"+cli.Device_Name+".key")
+	err, ans := cli.secure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"issue_service_certificate\", \"args\": {\"force-renew\":"+strconv.FormatBool(force)+"}}")
 
 	if cli.Verbose {
 		fmt.Printf(string(ans))
@@ -487,7 +499,7 @@ func (cli *Self_Authority_API) Issue_service_identity(force bool) string {
 }
 
 func (cli *Self_Authority_API) Get_trust_chain() string {
-	err, ans := cli.do_get("https://platform."+cli.Service+"/download/trust-chain?format=pem", "", cli.Identity_Dir+"/"+cli.Device_Name+".cer", cli.Identity_Dir+"/"+cli.Device_Name+".key")
+	err, ans := cli.secure_call("https://platform."+cli.Service+"/download/trust-chain?format=pem", "GET", "")
 
 	if err != "" {
 		return "unable to download trust chain: " + err
@@ -499,12 +511,12 @@ func (cli *Self_Authority_API) Get_trust_chain() string {
 	}
 
 	ioutil.WriteFile(cli.Identity_Dir+"/service-id/identity-plus-root-ca.cer", ans, 0644)
-	
-	return "trust chain saved: " + cli.Identity_Dir+"/service-id/identity-plus-root-ca.cer" 
+
+	return "trust chain saved: " + cli.Identity_Dir + "/service-id/identity-plus-root-ca.cer"
 }
 
 func (cli *Self_Authority_API) List_devices() string {
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"get_active_identities\", \"args\": {}}", cli.Identity_Dir+"/"+cli.Device_Name+".cer", cli.Identity_Dir+"/"+cli.Device_Name+".key")
+	err, ans := cli.secure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"get_active_identities\", \"args\": {}}")
 
 	if err != "" {
 		return "Failed to list active mTLS IDs for agent: " + err
@@ -517,7 +529,7 @@ func (cli *Self_Authority_API) List_devices() string {
 }
 
 func (cli *Self_Authority_API) List_service_roles() string {
-	err, ans := cli.do_post("https://signon."+cli.Service+"/api/v1", "{\"operation\": \"get_service_roles\", \"args\": {}}", cli.Identity_Dir+"/"+cli.Device_Name+".cer", cli.Identity_Dir+"/"+cli.Device_Name+".key")
+	err, ans := cli.secure_call("https://signon."+cli.Service+"/api/v1", "POST", "{\"operation\": \"get_service_roles\", \"args\": {}}")
 
 	if err != "" {
 		return "Failed to get service roles: " + err
@@ -530,7 +542,7 @@ func (cli *Self_Authority_API) List_service_roles() string {
 }
 
 func (cli *Self_Authority_API) Call(url string) string {
-	err, ans := cli.do_get(url, "", cli.Identity_Dir+"/"+cli.Device_Name+".cer", cli.Identity_Dir+"/"+cli.Device_Name+".key")
+	err, ans := cli.secure_call(url, "GET", "")
 
 	if err != "" {
 		return "Error Geting URL: " + err
