@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -111,7 +110,7 @@ func (cli *Self_Authority_API) client(client_certificate *tls.Certificate) (*htt
 	trusted_authorities, err := x509.SystemCertPool()
 
 	if err != nil && cli.Verbose {
-		fmt.Println("Unable to load system trust store: %v", err)
+		fmt.Printf("Unable to load system trust store: %v\n", err)
 	}
 
 	if trusted_authorities == nil {
@@ -122,7 +121,7 @@ func (cli *Self_Authority_API) client(client_certificate *tls.Certificate) (*htt
 		root_cert, err := ioutil.ReadFile(ca)
 
 		if err != nil {
-			return nil, errors.New("error loading trust material: " + err.Error())
+			fmt.Printf("Unable to load trust material %s: %v\n", ca, err)
 		}
 
 		_ = trusted_authorities.AppendCertsFromPEM(root_cert)
