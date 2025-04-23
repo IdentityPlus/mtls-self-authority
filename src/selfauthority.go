@@ -14,6 +14,7 @@ var command__ = "help"
 var authorization__ = ""
 var managed_service__ = ""
 var url__ = ""
+var body__ = ""
 
 func get_self_authority() *mtlsid.Self_Authority_API {
 	var sa mtlsid.Self_Authority_API
@@ -65,6 +66,7 @@ func main() {
 
 			if len(os.Args) <= i+1 {
 				fmt.Println("Usage: selfauthority [ flags ] -d device_name")
+				os.Exit(1)
 			} else {
 				cli.Device_Name = os.Args[i+1]
 				i = i + 1
@@ -74,6 +76,7 @@ func main() {
 
 			if len(os.Args) <= i+1 {
 				fmt.Println("Usage: selfauthority [ flags ] -f directory/to/store/identity")
+				os.Exit(1)
 			} else {
 				cli.Identity_Dir = os.Args[i+1]
 				i = i + 1
@@ -83,6 +86,7 @@ func main() {
 
 			if len(os.Args) <= i+1 {
 				fmt.Println("Usage: selfauthority [ flags ] -t path/to/trusted-root.cer")
+				os.Exit(1)
 			} else {
 				cli.TrustStore[0] = os.Args[i+1]
 				i = i + 1
@@ -92,6 +96,8 @@ func main() {
 
 			if len(os.Args) <= i+1 {
 				fmt.Println("Usage: selfauthority [ flags ] -s identity.plus.service.domain")
+				os.Exit(1)
+
 			} else {
 				cli.Service = os.Args[i+1]
 				i = i + 1
@@ -101,6 +107,8 @@ func main() {
 
 			if len(os.Args) <= i+1 {
 				fmt.Println("Usage: selfauthority [ flags ] enroll auto-provisioning-token")
+				os.Exit(1)
+
 			} else {
 				authorization__ = os.Args[i+1]
 				i = i + 1
@@ -111,6 +119,7 @@ func main() {
 
 			if len(os.Args) <= i+1 {
 				fmt.Println("Usage: selfauthority [ flags ] assist-enroll service")
+				os.Exit(1)
 			} else {
 				managed_service__ = os.Args[i+1]
 				i = i + 1
@@ -142,9 +151,21 @@ func main() {
 
 			if len(os.Args) <= i+1 {
 				fmt.Println("Usage: selfauthority [ flags ] get url")
+				os.Exit(1)
 			} else {
 				url__ = os.Args[i+1]
 				i = i + 1
+			}
+		} else if os.Args[i] == "post" {
+			command__ = os.Args[i]
+
+			if len(os.Args) <= i+2 {
+				fmt.Println("Usage: selfauthority [ flags ] post url body")
+				os.Exit(1)
+			} else {
+				url__ = os.Args[i+1]
+				body__ = os.Args[i+2]
+				i = i + 2
 			}
 		} else {
 			command__ = "help"
@@ -245,7 +266,12 @@ func main() {
 	}
 
 	if command__ == "get" {
-		ans := cli.Call(url__)
+		ans := cli.Call(url__, "GET", "")
+		fmt.Print(ans)
+	}
+
+	if command__ == "post" {
+		ans := cli.Call(url__, "POST", body__)
 		fmt.Print(ans)
 	}
 

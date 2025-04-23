@@ -540,8 +540,8 @@ func (cli *Self_Authority_API) List_service_roles() string {
 	return string(ans)
 }
 
-func (cli *Self_Authority_API) Call(url string) string {
-	err, ans := cli.secure_call(url, "GET", "")
+func (cli *Self_Authority_API) Call(url string, method string, body string) string {
+	err, ans := cli.secure_call(url, method, body)
 
 	if err != "" {
 		return "Error Geting URL: " + err
