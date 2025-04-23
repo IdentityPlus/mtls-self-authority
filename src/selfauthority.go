@@ -200,7 +200,7 @@ func main() {
 	defer logFile.Close()
 
 	// Set log out to file
-	// log.SetOutput(logFile)
+	log.SetOutput(logFile)
 
 	// ensure identity directory exists and it is writable
 	os.Mkdir(cli.Identity_Dir, 0700)
