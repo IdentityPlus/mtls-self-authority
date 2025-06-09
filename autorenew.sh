@@ -1,9 +1,10 @@
 #!/bin/bash
 
-if !(crontab -l | grep -q autorenew.sh) ; then
-    DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-    echo "installing agent mTLS ID update cron job for 2AM every day"
-    (crontab -l ; echo "0 4 * * * $DIR/autorenew.sh \"$1\" \"$2\"") | sort - | uniq - | crontab -
+DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+if !(crontab -l | grep -q "$DIR/autorenew.sh") ; then
+    echo "installing agent mTLS ID update cron job for 4AM every day"
+    (crontab -l ; echo "0 4 * * * $DIR/autorenew.sh") | sort - | uniq - | crontab -
 fi
 
 echo -n "updating agent mTLS ID... "

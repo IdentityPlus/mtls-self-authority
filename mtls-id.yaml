@@ -1,5 +1,5 @@
 verbose: true
-id_directory: "./identity"
-device_name: "for-postgres"
+id_directory: "."
+device_name: "default"
 turst_store: 
-    - "./identity/service-id/identity-plus-root-ca.cer"
+    - "./service-id/identity-plus-root-ca.cer"
